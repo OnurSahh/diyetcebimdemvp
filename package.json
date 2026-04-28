@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "vercel-build": "export DATABASE_URL=${DATABASE_URL:-${POSTGRES_URL_NON_POOLING:-${POSTGRES_PRISMA_URL:-$POSTGRES_URL}}}; [ -n \"$DATABASE_URL\" ] || (echo 'Missing database env. Set DATABASE_URL or Vercel Postgres vars.' && exit 1); prisma generate && prisma db push && next build",
     "start": "next start",
     "lint": "eslint",
     "postinstall": "prisma generate"
