@@ -1,36 +1,72 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+## Diet Yourself - Daily MVP
 
-## Getting Started
+Daily adaptive meal-plan MVP built with Next.js, SQLite, Prisma, and Gemini.
 
-First, run the development server:
+Core loop:
+1. Generate today plan
+2. Tick meal or upload photo
+3. Auto-adjust remaining meals
+
+### Tech Stack
+
+- Next.js App Router + React + TypeScript
+- Prisma + SQLite
+- JWT cookie auth
+- Gemini API integration for daily plan generation (with deterministic fallback)
+
+### Setup
+
+1. Install dependencies:
+
+```bash
+npm install
+```
+
+2. Create env file:
+
+```bash
+copy .env.example .env
+```
+
+3. Run Prisma migration:
+
+```bash
+npx prisma migrate dev
+```
+
+4. Start development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Current MVP Routes
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- Pages: `/`, `/signup`, `/login`, `/onboarding`, `/dashboard`
+- APIs:
+	- `/api/auth/signup`
+	- `/api/auth/login`
+	- `/api/auth/logout`
+	- `/api/auth/me`
+	- `/api/survey`
+	- `/api/mealplan`
+	- `/api/tracker`
+	- `/api/mealphoto`
 
-## Learn More
+### Notes
 
-To learn more about Next.js, take a look at the following resources:
+- This version is daily-plan only (no weekly page yet).
+- Meal photos are accepted for analysis flow but raw files are not stored.
+- If `GEMINI_API_KEY` is missing, daily plan generation falls back to deterministic default meals.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Validation Commands
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm run lint
+npm run build
+```
 
-## Deploy on Vercel
+Both pass with the current implementation baseline.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
