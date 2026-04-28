@@ -1,56 +1,54 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+
+type MealSlot = "breakfast" | "lunch" | "dinner" | "snack";
+
+type MealLog = {
+  id: string;
+  sourceType: string;
+  comparisonResult: string;
+  actualCalories: number;
+  actualProtein: number;
+  actualCarbs: number;
+  actualFat: number;
+  confidence?: number | null;
+  note?: string | null;
+};
 
 type Meal = {
   id: string;
-  mealSlot: "breakfast" | "lunch" | "dinner" | "snack";
+  mealSlot: MealSlot;
   mealName: string;
   portionText: string;
   plannedCalories: number;
   plannedProtein: number;
   plannedCarbs: number;
   plannedFat: number;
-  mealLogs: Array<{
-    id: string;
-    sourceType: string;
-    comparisonResult: string;
-    actualCalories: number;
-    actualProtein: number;
-    actualCarbs: number;
-    actualFat: number;
-  }>;
+  mealLogs: MealLog[];
 };
 
-type PlanResponse = {
-  plan: {
-    id: string;
-    status: string;
-    totalTargetCalories: number;
-    plannedMeals: Meal[];
-  } | null;
-  adjustments?: Array<{ id: string; summaryText: string }>;
-  profile?: {
-    calorieTarget: number | null;
-    macroProteinTarget: number | null;
-    macroCarbTarget: number | null;
-    macroFatTarget: number | null;
-    preferences: string | null;
-    allergies: string | null;
-    dislikes: string | null;
-  };
-};
+type Plan = {
+  id: string;
+  status: string;
+  totalTargetCalories: number;
+  plannedMeals: Meal[];
+} | null;
 
-type ProgressRingProps = {
-  label: string;
-  current: number;
-  target: number;
-  color: string;
+type Profile = {
+  calorieTarget: number;
+  macroProteinTarget: number;
+  macroCarbTarget: number;
+  macroFatTarget: number;
+  preferences: string;
+  allergies: string;
+  dislikes: string;
+  edHistoryFlag: boolean;
 };
 
 type AdjustmentDetail = {
   plannedMealId: string;
-  mealSlot: "breakfast" | "lunch" | "dinner" | "snack";
+  mealSlot: MealSlot;
   oldCalories: number;
   newCalories: number;
   oldProtein: number;
@@ -61,6 +59,24 @@ type AdjustmentDetail = {
   newFat: number;
   oldPortionText: string;
   newPortionText: string;
+};
+
+type ProgressRingProps = {
+  label: string;
+  current: number;
+  target: number;
+  color: string;
+};
+
+const DEFAULT_PROFILE: Profile = {
+  calorieTarget: 2465,
+  macroProteinTarget: 185,
+  macroCarbTarget: 247,
+  macroFatTarget: 82,
+  preferences: "High protein, practical meals",
+  allergies: "None",
+  dislikes: "Mushroom",
+  edHistoryFlag: false,
 };
 
 function ProgressRing({ label, current, target, color }: ProgressRingProps) {
@@ -95,28 +111,17 @@ function ProgressRing({ label, current, target, color }: ProgressRingProps) {
   );
 }
 
-function summarizePreferences(payload: PlanResponse | null): string {
-  if (!payload?.profile) {
-    return "your profile";
-  }
-
-  const parts = [payload.profile.preferences, payload.profile.allergies, payload.profile.dislikes]
-    .filter((value) => value && value.trim().length > 0)
-    .map((value) => value!.trim());
-
-  return parts.length > 0 ? parts.join(" | ") : "your profile";
-}
-
 export default function DashboardPage() {
-  const [data, setData] = useState<PlanResponse | null>(null);
+  const [profile, setProfile] = useState<Profile>(DEFAULT_PROFILE);
+  const [plan, setPlan] = useState<Plan>(null);
   const [error, setError] = useState("");
+
   const [planActionLoading, setPlanActionLoading] = useState<
     "generate" | "regenerate" | "delete" | null
   >(null);
-  const [loggingOut, setLoggingOut] = useState(false);
   const [tickingMealId, setTickingMealId] = useState<string | null>(null);
-  const [uploadingMealId, setUploadingMealId] = useState<string | null>(null);
   const [manualMealId, setManualMealId] = useState<string | null>(null);
+  const [uploadingMealId, setUploadingMealId] = useState<string | null>(null);
   const [photoModalMealId, setPhotoModalMealId] = useState<string | null>(null);
   const [selectedPhotoFile, setSelectedPhotoFile] = useState<File | null>(null);
   const [mealTextById, setMealTextById] = useState<Record<string, string>>({});
@@ -125,6 +130,14 @@ export default function DashboardPage() {
     details: AdjustmentDetail[];
   } | null>(null);
 
+  function updateProfile<K extends keyof Profile>(key: K, value: Profile[K]) {
+    setProfile((current) => ({ ...current, [key]: value }));
+  }
+
+  function resetDefaults() {
+    setProfile(DEFAULT_PROFILE);
+  }
+
   function maybeOpenAdjustmentModal(title: string, details?: AdjustmentDetail[]) {
     if (!details || details.length === 0) {
       return;
@@ -132,121 +145,79 @@ export default function DashboardPage() {
     setAdjustmentModal({ title, details });
   }
 
-  async function loadData() {
-    const res = await fetch("/api/tracker");
-    if (!res.ok) {
-      setError("Please log in and complete onboarding first.");
-      return;
-    }
-    const payload = (await res.json()) as PlanResponse;
-    setData(payload);
-  }
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadData();
-  }, []);
+  const orderedMeals = useMemo(() => {
+    const order: MealSlot[] = ["breakfast", "lunch", "dinner", "snack"];
+    return [...(plan?.plannedMeals ?? [])].sort(
+      (a, b) => order.indexOf(a.mealSlot) - order.indexOf(b.mealSlot),
+    );
+  }, [plan]);
 
   const totals = useMemo(() => {
-    const meals = data?.plan?.plannedMeals ?? [];
-    const planned = meals.reduce((sum, meal) => sum + meal.plannedCalories, 0);
-    const plannedProtein = meals.reduce((sum, meal) => sum + meal.plannedProtein, 0);
-    const plannedCarbs = meals.reduce((sum, meal) => sum + meal.plannedCarbs, 0);
-    const plannedFat = meals.reduce((sum, meal) => sum + meal.plannedFat, 0);
-    const consumed = meals.reduce((sum, meal) => {
-      const firstLog = meal.mealLogs[0];
-      return sum + (firstLog ? firstLog.actualCalories : 0);
-    }, 0);
-
-    const consumedProtein = meals.reduce((sum, meal) => {
-      const firstLog = meal.mealLogs[0];
-      return sum + (firstLog ? firstLog.actualProtein : 0);
-    }, 0);
-
-    const consumedCarbs = meals.reduce((sum, meal) => {
-      const firstLog = meal.mealLogs[0];
-      return sum + (firstLog ? firstLog.actualCarbs : 0);
-    }, 0);
-
-    const consumedFat = meals.reduce((sum, meal) => {
-      const firstLog = meal.mealLogs[0];
-      return sum + (firstLog ? firstLog.actualFat : 0);
-    }, 0);
-
-    const goalCalories =
-      data?.profile?.calorieTarget ?? data?.plan?.totalTargetCalories ?? Math.max(1, planned);
-    const goalProtein = data?.profile?.macroProteinTarget ?? Math.max(1, plannedProtein);
-    const goalCarbs = data?.profile?.macroCarbTarget ?? Math.max(1, plannedCarbs);
-    const goalFat = data?.profile?.macroFatTarget ?? Math.max(1, plannedFat);
+    const consumed = orderedMeals.reduce((sum, meal) => sum + (meal.mealLogs[0]?.actualCalories ?? 0), 0);
+    const consumedProtein = orderedMeals.reduce(
+      (sum, meal) => sum + (meal.mealLogs[0]?.actualProtein ?? 0),
+      0,
+    );
+    const consumedCarbs = orderedMeals.reduce((sum, meal) => sum + (meal.mealLogs[0]?.actualCarbs ?? 0), 0);
+    const consumedFat = orderedMeals.reduce((sum, meal) => sum + (meal.mealLogs[0]?.actualFat ?? 0), 0);
 
     return {
-      planned,
-      plannedProtein,
-      plannedCarbs,
-      plannedFat,
       consumed,
       consumedProtein,
       consumedCarbs,
       consumedFat,
-      goalCalories,
-      goalProtein,
-      goalCarbs,
-      goalFat,
     };
-  }, [data]);
+  }, [orderedMeals]);
 
   async function generatePlan(action: "generate" | "regenerate" | "delete") {
     setPlanActionLoading(action);
     setError("");
+
     const res = await fetch("/api/mealplan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({
+        action,
+        profile,
+      }),
     });
+
     setPlanActionLoading(null);
 
+    const body = (await res.json().catch(() => ({}))) as { error?: string; plan?: Plan };
     if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
       setError(body.error || "Could not generate plan");
       return;
     }
 
-    await loadData();
-  }
-
-  async function logout() {
-    setLoggingOut(true);
-    setError("");
-
-    const res = await fetch("/api/auth/logout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-    });
-
-    setLoggingOut(false);
-
-    if (!res.ok) {
-      setError("Could not log out. Please try again.");
-      return;
-    }
-
-    window.location.href = "/login";
+    setPlan(body.plan ?? null);
   }
 
   async function tickMeal(plannedMealId: string) {
+    if (!plan) {
+      return;
+    }
+
     setTickingMealId(plannedMealId);
     setError("");
+
     const res = await fetch("/api/tracker", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "tick", plannedMealId }),
+      body: JSON.stringify({
+        action: "tick",
+        plannedMealId,
+        plan,
+        profile,
+      }),
     });
+
     setTickingMealId(null);
 
     const body = (await res.json().catch(() => ({}))) as {
       error?: string;
+      plan?: Plan;
       adjustmentDetails?: AdjustmentDetail[];
-      plan?: PlanResponse["plan"];
     };
 
     if (!res.ok) {
@@ -254,12 +225,57 @@ export default function DashboardPage() {
       return;
     }
 
+    if (body.plan) {
+      setPlan(body.plan);
+    }
     maybeOpenAdjustmentModal("Adjustments applied after logging this meal", body.adjustmentDetails);
+  }
 
-    await loadData();
+  async function submitManualMealText(plannedMealId: string) {
+    if (!plan) {
+      return;
+    }
+
+    setManualMealId(plannedMealId);
+    setError("");
+
+    const res = await fetch("/api/tracker", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "manual_text",
+        plannedMealId,
+        eatenText: mealTextById[plannedMealId] ?? "",
+        plan,
+        profile,
+      }),
+    });
+
+    setManualMealId(null);
+
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      plan?: Plan;
+      adjustmentDetails?: AdjustmentDetail[];
+    };
+
+    if (!res.ok) {
+      setError(body.error || "Could not log manual meal");
+      return;
+    }
+
+    setMealTextById((current) => ({ ...current, [plannedMealId]: "" }));
+    if (body.plan) {
+      setPlan(body.plan);
+    }
+    maybeOpenAdjustmentModal("Adjustments applied after manual update", body.adjustmentDetails);
   }
 
   async function submitPhoto(plannedMealId: string) {
+    if (!plan) {
+      return;
+    }
+
     if (!selectedPhotoFile) {
       setError("Please choose a photo first.");
       return;
@@ -271,6 +287,8 @@ export default function DashboardPage() {
     const formData = new FormData();
     formData.append("plannedMealId", plannedMealId);
     formData.append("photo", selectedPhotoFile);
+    formData.append("plan", JSON.stringify(plan));
+    formData.append("profile", JSON.stringify(profile));
 
     const res = await fetch("/api/mealphoto", {
       method: "POST",
@@ -281,6 +299,7 @@ export default function DashboardPage() {
 
     const body = (await res.json().catch(() => ({}))) as {
       error?: string;
+      plan?: Plan;
       adjustmentDetails?: AdjustmentDetail[];
     };
 
@@ -289,216 +308,262 @@ export default function DashboardPage() {
       return;
     }
 
+    if (body.plan) {
+      setPlan(body.plan);
+    }
     maybeOpenAdjustmentModal("Adjustments applied from photo", body.adjustmentDetails);
     setPhotoModalMealId(null);
     setSelectedPhotoFile(null);
-    await loadData();
   }
-
-  async function submitManualMealText(plannedMealId: string) {
-    setManualMealId(plannedMealId);
-    setError("");
-
-    const res = await fetch("/api/tracker", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: "manual_text",
-        plannedMealId,
-        eatenText: mealTextById[plannedMealId] ?? "",
-      }),
-    });
-
-    setManualMealId(null);
-
-    const body = (await res.json().catch(() => ({}))) as {
-      error?: string;
-      adjustmentDetails?: AdjustmentDetail[];
-      plan?: PlanResponse["plan"];
-    };
-
-    if (!res.ok) {
-      setError(body.error || "Could not log manual meal");
-      return;
-    }
-
-    setMealTextById((current) => ({ ...current, [plannedMealId]: "" }));
-    maybeOpenAdjustmentModal("Adjustments applied after manual update", body.adjustmentDetails);
-    await loadData();
-  }
-
-  const orderedMeals = useMemo(() => {
-    const order = ["breakfast", "lunch", "dinner", "snack"];
-    const meals = data?.plan?.plannedMeals ?? [];
-    return [...meals].sort((a, b) => order.indexOf(a.mealSlot) - order.indexOf(b.mealSlot));
-  }, [data]);
 
   return (
     <main className="app-gradient-bg min-h-screen px-6 py-10">
-      <section className="mx-auto w-full max-w-6xl space-y-6">
-      <header className="glass-card rounded-3xl p-6 shadow-[0_20px_70px_-20px_rgba(15,23,42,0.35)]">
-        <div className="flex justify-end">
-          <button
-            className="cursor-pointer rounded-full border border-slate-300 bg-white/80 px-4 py-2 text-sm font-semibold transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-            onClick={() => void logout()}
-            disabled={loggingOut || Boolean(planActionLoading)}
-          >
-            {loggingOut ? "Logging out..." : "Log out"}
-          </button>
-        </div>
-        <p className="text-xs uppercase tracking-[0.2em] text-emerald-700">Today dashboard</p>
-        <h1 className="mt-2 text-3xl">Your daily flow: generate, log, adjust</h1>
-        <p className="mt-3 text-sm text-slate-700">
-          Goal: {totals.goalCalories} kcal • Taken: {totals.consumed} kcal
-        </p>
-
-        <div className="mt-5 grid gap-3 sm:grid-cols-3">
-          <div className="rounded-xl bg-white/75 px-3 py-2 text-sm text-slate-700">1. Generate plan</div>
-          <div className="rounded-xl bg-white/75 px-3 py-2 text-sm text-slate-700">2. Tick or upload meal photo</div>
-          <div className="rounded-xl bg-white/75 px-3 py-2 text-sm text-slate-700">3. See automatic same-day adjustments</div>
-        </div>
-
-        <div className="mt-5 flex flex-wrap gap-3">
-          <button className="cursor-pointer rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60" onClick={() => void generatePlan("generate")} disabled={Boolean(planActionLoading)}>
-            {planActionLoading === "generate" ? "Generating..." : "Generate Today Plan"}
-          </button>
-          <button className="cursor-pointer rounded-full border border-slate-300 bg-white/80 px-4 py-2 text-sm font-semibold transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60" onClick={() => void generatePlan("regenerate")} disabled={Boolean(planActionLoading)}>
-            {planActionLoading === "regenerate" ? "Regenerating..." : "Regenerate"}
-          </button>
-          <button className="cursor-pointer rounded-full border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60" onClick={() => void generatePlan("delete")} disabled={Boolean(planActionLoading)}>
-            {planActionLoading === "delete" ? "Deleting..." : "Delete Plan"}
-          </button>
-        </div>
-      </header>
-
-      <section className="glass-card rounded-3xl p-6 shadow-[0_20px_70px_-20px_rgba(15,23,42,0.35)]">
-        <h2 className="text-2xl">Today summary</h2>
-        {orderedMeals.length > 0 ? (
-          <p className="mt-2 text-sm text-slate-700">
-            Based off of your preferences ({summarizePreferences(data)}), we have generated the meal plan below for you.
+      <section className="mx-auto w-full max-w-7xl space-y-6">
+        <header className="glass-card rounded-3xl p-6 shadow-[0_20px_70px_-20px_rgba(15,23,42,0.35)]">
+          <p className="text-xs uppercase tracking-[0.2em] text-emerald-700">Today dashboard</p>
+          <h1 className="mt-2 text-3xl">Your daily flow: generate, log, adjust</h1>
+          <p className="mt-3 text-sm text-slate-700">
+            Goal: {profile.calorieTarget} kcal • Taken: {totals.consumed} kcal
           </p>
-        ) : (
-          <p className="mt-2 text-sm text-slate-700">
-            Generate today&apos;s meal plan to see your personalized meals and progress targets.
-          </p>
-        )}
-        <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <ProgressRing
-            label="Calories"
-            current={totals.consumed}
-            target={Math.max(1, totals.goalCalories)}
-            color="#0f766e"
-          />
-          <ProgressRing
-            label="Protein (g)"
-            current={totals.consumedProtein}
-            target={Math.max(1, totals.goalProtein)}
-            color="#2563eb"
-          />
-          <ProgressRing
-            label="Carbs (g)"
-            current={totals.consumedCarbs}
-            target={Math.max(1, totals.goalCarbs)}
-            color="#7c3aed"
-          />
-          <ProgressRing
-            label="Fat (g)"
-            current={totals.consumedFat}
-            target={Math.max(1, totals.goalFat)}
-            color="#b45309"
-          />
-        </div>
-      </section>
 
-      {error ? <p className="text-sm text-red-700">{error}</p> : null}
+          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl bg-white/75 px-3 py-2 text-sm text-slate-700">1. Generate plan</div>
+            <div className="rounded-xl bg-white/75 px-3 py-2 text-sm text-slate-700">2. Tick or upload meal photo</div>
+            <div className="rounded-xl bg-white/75 px-3 py-2 text-sm text-slate-700">3. See automatic same-day adjustments</div>
+          </div>
 
-      <section className="grid gap-4 md:grid-cols-2">
-        {orderedMeals.map((meal, index) => {
-          const status = meal.mealLogs.length > 0 ? "completed" : "pending";
-          const manualTextValue = mealTextById[meal.id] ?? "";
-          const manualTextEmpty = manualTextValue.trim().length === 0;
-          const isBlockedByOrder = orderedMeals
-            .slice(0, index)
-            .some((previousMeal) => previousMeal.mealLogs.length === 0);
-          const actionBusy =
-            Boolean(planActionLoading) ||
-            tickingMealId === meal.id ||
-            uploadingMealId === meal.id ||
-            manualMealId === meal.id;
-          const disableMealActions = isBlockedByOrder || actionBusy;
+          <div className="mt-5 flex flex-wrap gap-3">
+            <button
+              className="cursor-pointer rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={() => void generatePlan("generate")}
+              disabled={Boolean(planActionLoading)}
+            >
+              {planActionLoading === "generate" ? "Generating..." : "Generate Today Plan"}
+            </button>
+            <button
+              className="cursor-pointer rounded-full border border-slate-300 bg-white/80 px-4 py-2 text-sm font-semibold transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={() => void generatePlan("regenerate")}
+              disabled={Boolean(planActionLoading)}
+            >
+              {planActionLoading === "regenerate" ? "Regenerating..." : "Regenerate"}
+            </button>
+            <button
+              className="cursor-pointer rounded-full border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={() => void generatePlan("delete")}
+              disabled={Boolean(planActionLoading)}
+            >
+              {planActionLoading === "delete" ? "Deleting..." : "Delete Plan"}
+            </button>
+          </div>
+        </header>
 
-          return (
-            <article key={meal.id} className="glass-card rounded-2xl p-5 shadow-sm">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl capitalize">{index + 1}. {meal.mealSlot}</h2>
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase text-slate-700">{status}</span>
-              </div>
-              <p className="mt-2 text-base font-semibold text-slate-900">{meal.mealName}</p>
-              <p className="mt-1 text-sm text-slate-600">{meal.portionText}</p>
-              <p className="mt-3 text-sm text-slate-700">
-                {meal.plannedCalories} kcal • P {meal.plannedProtein}g • C {meal.plannedCarbs}g • F {meal.plannedFat}g
-              </p>
-
-              {meal.mealLogs.length === 0 ? (
-                <div className="mt-4 space-y-3">
-                  <div className="space-y-2">
-                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                      WHAT DID YOU EAT INSTEAD?
-                    </label>
-                    <div className="relative">
-                      <textarea
-                        className="min-h-[88px] w-full rounded-xl border border-slate-300 bg-white/85 px-3 py-2 pr-24 text-sm outline-none ring-emerald-500 transition focus:ring"
-                        placeholder="e.g. 1 bowl lentil soup + 1 slice bread"
-                        value={manualTextValue}
-                        onChange={(event) =>
-                          setMealTextById((current) => ({ ...current, [meal.id]: event.target.value }))
-                        }
-                        disabled={disableMealActions}
-                      />
-                      <button
-                        className="absolute bottom-3 right-3 cursor-pointer rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
-                        onClick={() => void submitManualMealText(meal.id)}
-                        disabled={disableMealActions || manualTextEmpty}
-                      >
-                        {manualMealId === meal.id ? "Sending..." : "Send"}
-                      </button>
-                    </div>
-                    <button
-                      className="w-full cursor-pointer rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-                      onClick={() => {
-                        setMealTextById((current) => ({ ...current, [meal.id]: "" }));
-                        void submitManualMealText(meal.id);
-                      }}
-                      disabled={disableMealActions}
-                    >
-                      {manualMealId === meal.id ? "Marking skip..." : "I skipped this meal"}
-                    </button>
-                  </div>
-
-                  <button
-                    className="w-full cursor-pointer rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                    onClick={() => void tickMeal(meal.id)}
-                    disabled={disableMealActions}
-                  >
-                    {tickingMealId === meal.id ? "Logging..." : "Tick as eaten"}
-                  </button>
-
-                  <button className="w-full cursor-pointer rounded-xl border border-slate-300 bg-white/80 px-4 py-2 text-sm font-semibold transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={disableMealActions} onClick={() => { setSelectedPhotoFile(null); setPhotoModalMealId(meal.id); }}>
-                      {uploadingMealId === meal.id ? "Sending photo..." : "Send photo"}
-                  </button>
-
-                  {isBlockedByOrder ? (
-                    <p className="text-xs font-medium text-amber-700">
-                      Complete previous meal(s) first.
-                    </p>
-                  ) : null}
-                </div>
+        <section className="grid gap-6 lg:grid-cols-[2fr_1fr]">
+          <div className="space-y-6">
+            <section className="glass-card rounded-3xl p-6 shadow-[0_20px_70px_-20px_rgba(15,23,42,0.35)]">
+              <h2 className="text-2xl">Today summary</h2>
+              {orderedMeals.length > 0 ? (
+                <p className="mt-2 text-sm text-slate-700">
+                  Based off of your preferences ({profile.preferences}), we have generated the meal plan below for you.
+                </p>
               ) : (
-                <p className="mt-4 text-sm text-emerald-700">Meal logged.</p>
+                <p className="mt-2 text-sm text-slate-700">
+                  Generate today&apos;s meal plan to see your personalized meals and progress targets.
+                </p>
               )}
-            </article>
-          );
-        })}
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <ProgressRing label="Calories" current={totals.consumed} target={profile.calorieTarget} color="#0f766e" />
+                <ProgressRing
+                  label="Protein (g)"
+                  current={totals.consumedProtein}
+                  target={profile.macroProteinTarget}
+                  color="#2563eb"
+                />
+                <ProgressRing
+                  label="Carbs (g)"
+                  current={totals.consumedCarbs}
+                  target={profile.macroCarbTarget}
+                  color="#7c3aed"
+                />
+                <ProgressRing label="Fat (g)" current={totals.consumedFat} target={profile.macroFatTarget} color="#b45309" />
+              </div>
+            </section>
+
+            {error ? <p className="text-sm text-red-700">{error}</p> : null}
+
+            <section className="grid gap-4 md:grid-cols-2">
+              {orderedMeals.map((meal, index) => {
+                const status = meal.mealLogs.length > 0 ? "completed" : "pending";
+                const manualTextValue = mealTextById[meal.id] ?? "";
+                const manualTextEmpty = manualTextValue.trim().length === 0;
+                const isBlockedByOrder = orderedMeals
+                  .slice(0, index)
+                  .some((previousMeal) => previousMeal.mealLogs.length === 0);
+                const actionBusy =
+                  Boolean(planActionLoading) ||
+                  tickingMealId === meal.id ||
+                  uploadingMealId === meal.id ||
+                  manualMealId === meal.id;
+                const disableMealActions = isBlockedByOrder || actionBusy;
+
+                return (
+                  <article key={meal.id} className="glass-card rounded-2xl p-5 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-xl capitalize">{index + 1}. {meal.mealSlot}</h2>
+                      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase text-slate-700">{status}</span>
+                    </div>
+                    <p className="mt-2 text-base font-semibold text-slate-900">{meal.mealName}</p>
+                    <p className="mt-1 text-sm text-slate-600">{meal.portionText}</p>
+                    <p className="mt-3 text-sm text-slate-700">
+                      {meal.plannedCalories} kcal • P {meal.plannedProtein}g • C {meal.plannedCarbs}g • F {meal.plannedFat}g
+                    </p>
+
+                    {meal.mealLogs.length === 0 ? (
+                      <div className="mt-4 space-y-3">
+                        <div className="space-y-2">
+                          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                            WHAT DID YOU EAT INSTEAD?
+                          </label>
+                          <div className="relative">
+                            <textarea
+                              className="min-h-[88px] w-full rounded-xl border border-slate-300 bg-white/85 px-3 py-2 pr-24 text-sm outline-none ring-emerald-500 transition focus:ring"
+                              placeholder="e.g. 1 bowl lentil soup + 1 slice bread"
+                              value={manualTextValue}
+                              onChange={(event) =>
+                                setMealTextById((current) => ({ ...current, [meal.id]: event.target.value }))
+                              }
+                              disabled={disableMealActions}
+                            />
+                            <button
+                              className="absolute bottom-3 right-3 cursor-pointer rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                              onClick={() => void submitManualMealText(meal.id)}
+                              disabled={disableMealActions || manualTextEmpty}
+                            >
+                              {manualMealId === meal.id ? "Sending..." : "Send"}
+                            </button>
+                          </div>
+                          <button
+                            className="w-full cursor-pointer rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                            onClick={() => {
+                              setMealTextById((current) => ({ ...current, [meal.id]: "" }));
+                              void submitManualMealText(meal.id);
+                            }}
+                            disabled={disableMealActions}
+                          >
+                            {manualMealId === meal.id ? "Marking skip..." : "I skipped this meal"}
+                          </button>
+                        </div>
+
+                        <button
+                          className="w-full cursor-pointer rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={() => void tickMeal(meal.id)}
+                          disabled={disableMealActions}
+                        >
+                          {tickingMealId === meal.id ? "Logging..." : "Tick as eaten"}
+                        </button>
+
+                        <button
+                          className="w-full cursor-pointer rounded-xl border border-slate-300 bg-white/80 px-4 py-2 text-sm font-semibold transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                          type="button"
+                          disabled={disableMealActions}
+                          onClick={() => {
+                            setSelectedPhotoFile(null);
+                            setPhotoModalMealId(meal.id);
+                          }}
+                        >
+                          {uploadingMealId === meal.id ? "Sending photo..." : "Send photo"}
+                        </button>
+
+                        {isBlockedByOrder ? (
+                          <p className="text-xs font-medium text-amber-700">Complete previous meal(s) first.</p>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <p className="mt-4 text-sm text-emerald-700">Meal logged.</p>
+                    )}
+                  </article>
+                );
+              })}
+            </section>
+          </div>
+
+          <aside className="glass-card rounded-3xl p-6 shadow-[0_20px_70px_-20px_rgba(15,23,42,0.35)]">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl">Profile</h2>
+              <button
+                className="rounded-lg border border-slate-300 px-3 py-1 text-sm font-semibold transition hover:bg-white"
+                onClick={resetDefaults}
+              >
+                Reset
+              </button>
+            </div>
+            <p className="mt-2 text-sm text-slate-600">
+              This profile is local in-browser and returns to defaults after refresh.
+            </p>
+
+            <div className="mt-5 space-y-3">
+              <label className="block text-sm font-medium text-slate-700">
+                Calories target
+                <input
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  type="number"
+                  value={profile.calorieTarget}
+                  onChange={(event) => updateProfile("calorieTarget", Number(event.target.value) || 0)}
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                Protein target (g)
+                <input
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  type="number"
+                  value={profile.macroProteinTarget}
+                  onChange={(event) => updateProfile("macroProteinTarget", Number(event.target.value) || 0)}
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                Carbs target (g)
+                <input
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  type="number"
+                  value={profile.macroCarbTarget}
+                  onChange={(event) => updateProfile("macroCarbTarget", Number(event.target.value) || 0)}
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                Fat target (g)
+                <input
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  type="number"
+                  value={profile.macroFatTarget}
+                  onChange={(event) => updateProfile("macroFatTarget", Number(event.target.value) || 0)}
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                Preferences
+                <input
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  value={profile.preferences}
+                  onChange={(event) => updateProfile("preferences", event.target.value)}
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                Allergies
+                <input
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  value={profile.allergies}
+                  onChange={(event) => updateProfile("allergies", event.target.value)}
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                Dislikes
+                <input
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  value={profile.dislikes}
+                  onChange={(event) => updateProfile("dislikes", event.target.value)}
+                />
+              </label>
+            </div>
+          </aside>
+        </section>
       </section>
 
       {photoModalMealId ? (
@@ -546,22 +611,21 @@ export default function DashboardPage() {
                 Close
               </button>
             </div>
-            <div className="mt-4 max-h-[55vh] space-y-3 overflow-auto">
-              {adjustmentModal.details.map((item) => (
-                <article key={item.plannedMealId} className="rounded-xl border border-slate-200 p-3">
-                  <p className="text-sm font-semibold capitalize text-slate-900">{item.mealSlot}</p>
+            <div className="mt-4 max-h-[60vh] space-y-3 overflow-y-auto pr-1">
+              {adjustmentModal.details.map((detail) => (
+                <div key={detail.plannedMealId} className="rounded-xl border border-slate-200 p-3">
+                  <p className="text-sm font-semibold capitalize text-slate-900">{detail.mealSlot}</p>
                   <p className="mt-1 text-xs text-slate-600">
-                    Calories {item.oldCalories} {"->"} {item.newCalories} | P {item.oldProtein} {"->"} {item.newProtein} | C {item.oldCarbs} {"->"} {item.newCarbs} | F {item.oldFat} {"->"} {item.newFat}
+                    Calories {detail.oldCalories} → {detail.newCalories} • Protein {detail.oldProtein} → {detail.newProtein} • Carbs {detail.oldCarbs} → {detail.newCarbs} • Fat {detail.oldFat} → {detail.newFat}
                   </p>
-                  <p className="mt-2 text-xs text-slate-500">Before: {item.oldPortionText}</p>
-                  <p className="mt-1 text-xs text-slate-700">After: {item.newPortionText}</p>
-                </article>
+                  <p className="mt-2 text-xs text-slate-600">Before: {detail.oldPortionText}</p>
+                  <p className="mt-1 text-xs text-slate-800">After: {detail.newPortionText}</p>
+                </div>
               ))}
             </div>
           </div>
         </div>
       ) : null}
-      </section>
     </main>
   );
 }
