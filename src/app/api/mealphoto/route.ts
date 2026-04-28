@@ -214,7 +214,15 @@ Return strict JSON only with keys:
   const shouldKeepSame = vision.plan_action !== "replace_meal";
 
   if (!shouldKeepSame) {
-    plannedMeal.mealName = vision.replacement_meal?.mealName?.trim() || plannedMeal.mealName;
+    const fallbackNameFromItems = (vision.detected_items ?? [])
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0)
+      .slice(0, 3)
+      .join(" + ");
+
+    plannedMeal.mealName =
+      vision.replacement_meal?.mealName?.trim() ||
+      (fallbackNameFromItems ? `Photo meal: ${fallbackNameFromItems}` : "Photo-detected meal");
     plannedMeal.portionText =
       vision.replacement_meal?.portionText?.trim() || vision.portion_estimate || plannedMeal.portionText;
     plannedMeal.plannedCalories = Math.max(
